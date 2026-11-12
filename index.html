@@ -1,327 +1,149 @@
+
 <!DOCTYPE html>
 <html lang="fr">
-
 <head>
-
 <meta charset="UTF-8">
-
-<meta name="viewport"
-      content="width=device-width, initial-scale=1.0">
-
-<title>Suivi de personne</title>
-
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Caméra téléphone</title>
 
 <style>
-
 body {
     margin: 0;
-    background: black;
+    background: #111;
     color: white;
-    font-family: Arial;
+    font-family: Arial, sans-serif;
     text-align: center;
 }
 
-#container {
-    position: relative;
-    width: 100%;
-    max-width: 800px;
-    margin: auto;
+h1 { margin: 20px; }
+
+button {
+    font-size: 18px;
+    padding: 12px 25px;
+    margin: 10px;
 }
 
 video {
-    width: 100%;
+    width: 90%;
+    max-width: 800px;
+    margin-top: 20px;
 }
 
-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
+#status {
+    margin: 15px;
+    font-size: 16px;
 }
-
-#info {
-    font-size: 20px;
-    padding: 15px;
-}
-
 </style>
-
 </head>
-
 
 <body>
 
-<h2>Suivi de personne</h2>
+<h1>Caméra du téléphone</h1>
 
-<div id="container">
+<button id="connectButton">Connecter l'ESP32</button>
+<button id="startButton">Démarrer la caméra</button>
 
-    <video id="video"
-           autoplay
-           playsinline>
-    </video>
+<p id="status">Bluetooth non connecté</p>
 
-    <canvas id="canvas"></canvas>
-
-</div>
-
-<div id="info">
-
-    x = <span id="x">0</span>
-
-</div>
-
+<br>
+<video id="video" autoplay playsinline></video>
 
 <script>
-
 const video = document.getElementById("video");
+const startButton = document.getElementById("startButton");
+const connectButton = document.getElementById("connectButton");
+const status = document.getElementById("status");
 
-const canvas = document.getElementById("canvas");
+// UUID du service BLE ESP32
+const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 
-const ctx = canvas.getContext("2d");
+// UUID de la caractéristique RX
+const RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 
-const xDisplay = document.getElementById("x");
+let bleDevice = null;
+let rxCharacteristic = null;
 
+// Connexion Bluetooth
+connectButton.addEventListener("click", async function() {
+    try {
+        if (!navigator.bluetooth) {
+            status.textContent =
+                "Bluetooth Web non disponible. Utilise Chrome sur Android.";
+            return;
+        }
 
-// ======================================================
-// IP DE L'ESP32
-// ======================================================
+        status.textContent = "Recherche de l'ESP32...";
 
-const ESP32_IP = "192.168.4.1";
+        bleDevice = await navigator.bluetooth.requestDevice({
+            filters: [{ name: "SUIVI_PERSONNE_ESP32" }],
+            optionalServices: [SERVICE_UUID]
+        });
 
+        const server = await bleDevice.gatt.connect();
 
-// ======================================================
-// DEMARRAGE CAMERA
-// ======================================================
+        const service = await server.getPrimaryService(SERVICE_UUID);
 
-async function startCamera()
-{
+        rxCharacteristic = await service.getCharacteristic(RX_UUID);
 
-    const stream = await navigator.mediaDevices.getUserMedia({
+        status.textContent = "ESP32 connecté !";
 
-        video: {
-            facingMode: "environment"
-        },
+        bleDevice.addEventListener("gattserverdisconnected", function() {
+            rxCharacteristic = null;
+            status.textContent = "ESP32 déconnecté";
+        });
 
-        audio: false
+    } catch (error) {
+        console.error(error);
+        status.textContent = "Erreur Bluetooth : " + error.message;
+    }
+});
 
-    });
+// Envoi de la position à l'ESP32
+async function sendPosition(x) {
+    if (!rxCharacteristic) return;
 
-    video.srcObject = stream;
-
+    try {
+        const value = new TextEncoder().encode(x.toFixed(2));
+        await rxCharacteristic.writeValue(value);
+    } catch (error) {
+        console.error("Erreur d'envoi BLE :", error);
+    }
 }
 
+// Démarrage de la caméra
+startButton.addEventListener("click", async function() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" },
+            audio: false
+        });
 
-// ======================================================
-// DETECTION PERSONNE
-// ======================================================
+        video.srcObject = stream;
+        console.log("Caméra démarrée");
 
-async function startDetection()
-{
+    } catch (error) {
+        console.error(error);
+        alert("Impossible d'accéder à la caméra : " + error.message);
+    }
+});
 
-    console.log("Chargement du modèle...");
+// TEST : déplacement manuel de la position
+// À remplacer ensuite par la détection de personne.
+let testPosition = 0;
 
-    const model = await cocoSsd.load();
+setInterval(async function() {
+    if (!rxCharacteristic) return;
 
-    console.log("Modèle chargé");
+    testPosition += 0.05;
 
-    detectPerson(model);
-
-}
-
-
-// ======================================================
-// DETECTION
-// ======================================================
-
-async function detectPerson(model)
-{
-
-    canvas.width = video.videoWidth;
-
-    canvas.height = video.videoHeight;
-
-
-    const predictions = await model.detect(video);
-
-
-    // Nettoyage
-    ctx.clearRect(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
-
-    // Cherche les personnes
-    const persons = predictions.filter(
-        p => p.class === "person"
-    );
-
-
-    if (persons.length > 0)
-    {
-
-        // On prend la personne avec
-        // la plus grande probabilité
-
-        persons.sort(
-            (a, b) => b.score - a.score
-        );
-
-        const person = persons[0];
-
-
-        // -------------------------------
-        // Bounding box
-        // -------------------------------
-
-        const [x, y, width, height] =
-            person.bbox;
-
-
-        // Centre de la personne
-        const centerX =
-            x + width / 2;
-
-
-        // Centre de l'image
-        const imageCenter =
-            video.videoWidth / 2;
-
-
-        // -------------------------------
-        // Normalisation
-        // -------------------------------
-
-        let normalizedX =
-            (centerX - imageCenter)
-            / imageCenter;
-
-
-        // Limitation
-        normalizedX =
-            Math.max(
-                -1,
-                Math.min(
-                    1,
-                    normalizedX
-                )
-            );
-
-
-        // Affichage
-        xDisplay.textContent =
-            normalizedX.toFixed(2);
-
-
-        // -------------------------------
-        // Dessin
-        // -------------------------------
-
-        ctx.strokeStyle = "red";
-
-        ctx.lineWidth = 4;
-
-        ctx.strokeRect(
-            x,
-            y,
-            width,
-            height
-        );
-
-
-        // Ligne centrale
-        ctx.strokeStyle = "yellow";
-
-        ctx.beginPath();
-
-        ctx.moveTo(
-            imageCenter,
-            0
-        );
-
-        ctx.lineTo(
-            imageCenter,
-            canvas.height
-        );
-
-        ctx.stroke();
-
-
-        // Point central de la personne
-        ctx.fillStyle = "lime";
-
-        ctx.beginPath();
-
-        ctx.arc(
-            centerX,
-            y + height / 2,
-            8,
-            0,
-            2 * Math.PI
-        );
-
-        ctx.fill();
-
-
-        // -------------------------------
-        // ENVOI ESP32
-        // -------------------------------
-
-        sendPosition(normalizedX);
-
+    if (testPosition > 1) {
+        testPosition = -1;
     }
 
+    await sendPosition(testPosition);
 
-    // Nouvelle détection
-    requestAnimationFrame(
-        () => detectPerson(model)
-    );
-
-}
-
-
-// ======================================================
-// ENVOI DE X À L'ESP32
-// ======================================================
-
-function sendPosition(x)
-{
-
-    fetch(
-        `http://${ESP32_IP}/position?x=${x.toFixed(3)}`
-    )
-    .catch(
-        error => console.log(
-            "ESP32 non connecté"
-        )
-    );
-
-}
-
-
-// ======================================================
-// DEMARRAGE
-// ======================================================
-
-async function start()
-{
-
-    await startCamera();
-
-    await startDetection();
-
-}
-
-
-start();
-
+}, 100);
 </script>
 
 </body>
-
 </html>
