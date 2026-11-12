@@ -135,7 +135,6 @@
         const MIN_SEND_INTERVAL_MS = 100;
         const HEARTBEAT_INTERVAL_MS = 500;
         const POSITION_EPSILON = 0.02;
-        const MIN_PERSON_SCORE = 0.5;
 
         const video = document.getElementById("video");
         const canvas = document.getElementById("canvas");
@@ -297,12 +296,16 @@
         async function detectionLoop() {
             while (running) {
                 try {
-                    const predictions = await detector.detect(video, 20, MIN_PERSON_SCORE);
+                    const predictions = await detector.detect(video);
                     if (!running) break;
 
-                    const person = predictions
-                        .filter((prediction) => prediction.class === "person")
-                        .sort((a, b) => b.score - a.score)[0];
+                    const persons = predictions.filter((prediction) => prediction.class === "person");
+                    let person = null;
+
+                    if (persons.length > 0) {
+                        persons.sort((a, b) => b.score - a.score);
+                        person = persons[0];
+                    }
 
                     drawDetection(person);
                     if (person) {
