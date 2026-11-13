@@ -3,13 +3,17 @@
 <html lang="fr">
 
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
 
 <title>Suivi de personne</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
 <style>
 
@@ -26,7 +30,6 @@ body {
     width: 100%;
     max-width: 800px;
     margin: auto;
-    overflow: hidden;
 }
 
 video {
@@ -43,7 +46,7 @@ canvas {
 }
 
 #info {
-    font-size: 18px;
+    font-size: 20px;
     padding: 15px;
 }
 
@@ -51,69 +54,111 @@ button {
     padding: 12px 18px;
     margin: 5px;
     font-size: 16px;
+    border: none;
+    border-radius: 5px;
     cursor: pointer;
+}
+
+#connectButton {
+    background: #0878d1;
+    color: white;
+}
+
+#startButton {
+    background: #168a45;
+    color: white;
+}
+
+#stopButton {
+    background: #bd3434;
+    color: white;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#status {
+    padding: 10px;
+    color: #00ff80;
 }
 
 </style>
 
 </head>
 
+
 <body>
 
 <h2>Suivi de personne</h2>
 
-<button id="connectButton">Connecter ESP32</button>
-<button id="startButton">Démarrer caméra</button>
-<button id="stopButton" disabled>Arrêter</button>
+<!-- ================================================== -->
+<!-- BOUTONS -->
+<!-- ================================================== -->
 
-<p id="status">En attente...</p>
+<button id="connectButton">
+    Connecter ESP32
+</button>
+
+<button id="startButton">
+    Démarrer caméra
+</button>
+
+<button id="stopButton" disabled>
+    Arrêter
+</button>
+
+
+<!-- ================================================== -->
+<!-- ETAT DU SYSTEME -->
+<!-- ================================================== -->
+
+<p id="status">
+    En attente de connexion...
+</p>
+
+
+<!-- ================================================== -->
+<!-- CAMERA -->
+<!-- ================================================== -->
 
 <div id="container">
 
-    <video id="video" autoplay muted playsinline></video>
+    <video id="video"
+           autoplay
+           muted
+           playsinline>
+    </video>
 
     <canvas id="canvas"></canvas>
 
 </div>
 
+
+<!-- ================================================== -->
+<!-- AFFICHAGE -->
+<!-- ================================================== -->
+
 <div id="info">
 
-    Position X : <span id="x">0.000</span>
+    Position X :
+    <span id="x">0</span>
+
     <br><br>
 
-    Détection : <span id="detection">Aucune</span>
+    Détection :
+    <span id="detection">Aucune</span>
+
     <br><br>
 
-    Bluetooth : <span id="ble">Déconnecté</span>
+    Bluetooth :
+    <span id="ble">Déconnecté</span>
 
 </div>
 
 
 <script>
-
-// ======================================================
-// PARAMÈTRES BLUETOOTH BLE
-// ======================================================
-
-const SERVICE_UUID =
-    "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-
-const RX_UUID =
-    "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-
-const DEVICE_NAME = "SUIVI_PERSONNE_ESP32";
-
-
-// ======================================================
-// PARAMÈTRES DE TRANSMISSION
-// ======================================================
-
-const MIN_SEND_INTERVAL_MS = 100;
-
-const HEARTBEAT_INTERVAL_MS = 500;
-
-const POSITION_EPSILON = 0.02;
-
 
 // ======================================================
 // ELEMENTS HTML
@@ -141,109 +186,130 @@ const stopButton = document.getElementById("stopButton");
 
 
 // ======================================================
-// VARIABLES
+// PARAMETRES BLUETOOTH BLE
 // ======================================================
 
-let model = null;
+const DEVICE_NAME = "SUIVI_PERSONNE_ESP32";
 
-let cameraStream = null;
+const SERVICE_UUID =
+    "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+
+const RX_UUID =
+    "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+
+
+// ======================================================
+// VARIABLES
+// ======================================================
 
 let bleDevice = null;
 
 let rxCharacteristic = null;
 
+let cameraStream = null;
+
+let model = null;
+
 let running = false;
 
-let lastSentPosition = null;
-
-let lastSentAt = 0;
-
-
-// ======================================================
-// GESTION DU STATUT
-// ======================================================
-
-function setStatus(message) {
-
-    statusDisplay.textContent = message;
-
-}
-
-
-function isBleConnected() {
-
-    return Boolean(
-        bleDevice &&
-        bleDevice.gatt &&
-        bleDevice.gatt.connected &&
-        rxCharacteristic
-    );
-
-}
+// File d'attente pour les transmissions BLE
+let writeQueue = Promise.resolve();
 
 
 // ======================================================
-// CONNEXION BLUETOOTH BLE
+// CONNEXION BLUETOOTH
 // ======================================================
 
-async function connectBle() {
+async function connectBle()
+{
 
-    if (!navigator.bluetooth) {
+    if (!navigator.bluetooth)
+    {
 
-        setStatus("Web Bluetooth non disponible. Utilise Chrome sur Android.");
+        statusDisplay.textContent =
+            "Bluetooth BLE non disponible sur ce navigateur.";
 
         return;
 
     }
 
-    try {
+    try
+    {
 
-        setStatus("Recherche de l'ESP32...");
+        statusDisplay.textContent =
+            "Recherche de l'ESP32...";
+
 
         bleDevice = await navigator.bluetooth.requestDevice({
 
-            filters: [{ name: DEVICE_NAME }],
+            filters: [
+                { name: DEVICE_NAME }
+            ],
 
-            optionalServices: [SERVICE_UUID]
+            optionalServices: [
+                SERVICE_UUID
+            ]
 
         });
 
+
+        // Connexion au serveur GATT
+
+        const server = await bleDevice.gatt.connect();
+
+
+        // Recherche du service
+
+        const service =
+            await server.getPrimaryService(SERVICE_UUID);
+
+
+        // Recherche de la caractéristique RX
+
+        rxCharacteristic =
+            await service.getCharacteristic(RX_UUID);
+
+
+        // Etat de connexion
+
+        bleDisplay.textContent = "Connecté";
+
+        connectButton.textContent = "ESP32 connecté";
+
+        statusDisplay.textContent =
+            "ESP32 connecté avec succès !";
+
+
+        // Surveillance de la déconnexion
 
         bleDevice.addEventListener(
             "gattserverdisconnected",
             handleBleDisconnect
         );
 
-
-        const server = await bleDevice.gatt.connect();
-
-        const service = await server.getPrimaryService(SERVICE_UUID);
-
-        rxCharacteristic = await service.getCharacteristic(RX_UUID);
-
-
-        bleDisplay.textContent = "Connecté";
-
-        connectButton.textContent = "ESP32 connecté";
-
-        setStatus("ESP32 connecté en Bluetooth BLE.");
-
     }
 
-    catch (error) {
+    catch(error)
+    {
 
         rxCharacteristic = null;
 
         bleDisplay.textContent = "Déconnecté";
 
-        setStatus("Erreur BLE : " + error.message);
+        statusDisplay.textContent =
+            "Erreur Bluetooth : " + error.message;
 
     }
 
 }
 
 
-function handleBleDisconnect() {
+// ======================================================
+// GESTION DE LA DECONNEXION
+// ======================================================
+
+function handleBleDisconnect()
+{
 
     rxCharacteristic = null;
 
@@ -251,100 +317,87 @@ function handleBleDisconnect() {
 
     connectButton.textContent = "Connecter ESP32";
 
-    setStatus("ESP32 déconnecté.");
+    statusDisplay.textContent =
+        "ESP32 déconnecté.";
 
 }
 
 
 // ======================================================
-// ENVOI DE LA POSITION À L'ESP32
+// ENVOI DE X A L'ESP32 PAR BLE
 // ======================================================
 
-async function writePosition(position) {
+function sendPosition(x)
+{
 
-    if (!isBleConnected()) return false;
+    if (
+        !bleDevice ||
+        !bleDevice.gatt ||
+        !bleDevice.gatt.connected ||
+        !rxCharacteristic
+    )
+    {
+        return;
+    }
 
-    const value = new TextEncoder().encode(
-        position.toFixed(3)
+
+    // Conversion en texte
+
+    const data = new TextEncoder().encode(
+        x.toFixed(3)
     );
 
-    try {
+
+    // Mise en file d'attente pour éviter
+    // plusieurs écritures simultanées
+
+    writeQueue = writeQueue.then(async () =>
+    {
+
+        if (
+            !bleDevice ||
+            !bleDevice.gatt.connected ||
+            !rxCharacteristic
+        )
+        {
+            return;
+        }
+
 
         if (
             rxCharacteristic.properties.writeWithoutResponse &&
             rxCharacteristic.writeValueWithoutResponse
-        ) {
+        )
+        {
 
-            await rxCharacteristic.writeValueWithoutResponse(value);
+            await rxCharacteristic.writeValueWithoutResponse(data);
 
         }
 
         else if (
             rxCharacteristic.properties.write &&
             rxCharacteristic.writeValueWithResponse
-        ) {
-
-            await rxCharacteristic.writeValueWithResponse(value);
-
-        }
-
-        else {
-
-            await rxCharacteristic.writeValue(value);
-
-        }
-
-        lastSentPosition = position;
-
-        lastSentAt = performance.now();
-
-        return true;
-
-    }
-
-    catch (error) {
-
-        setStatus("Erreur d'envoi BLE : " + error.message);
-
-        return false;
-
-    }
-
-}
-
-
-// ======================================================
-// GESTION DE LA FREQUENCE D'ENVOI
-// ======================================================
-
-async function sendPositionIfDue(position, force = false) {
-
-    if (!isBleConnected()) return;
-
-    const now = performance.now();
-
-    const changed =
-        lastSentPosition === null ||
-        Math.abs(position - lastSentPosition) >= POSITION_EPSILON;
-
-    const heartbeatDue =
-        now - lastSentAt >= HEARTBEAT_INTERVAL_MS;
-
-    const minimumIntervalElapsed =
-        now - lastSentAt >= MIN_SEND_INTERVAL_MS;
-
-
-    if (
-        force ||
-        (
-            minimumIntervalElapsed &&
-            (changed || heartbeatDue)
         )
-    ) {
+        {
 
-        await writePosition(position);
+            await rxCharacteristic.writeValueWithResponse(data);
 
-    }
+        }
+
+        else
+        {
+
+            await rxCharacteristic.writeValue(data);
+
+        }
+
+    })
+    .catch(error =>
+    {
+
+        console.log("Erreur transmission BLE :", error);
+
+    });
 
 }
 
@@ -353,9 +406,10 @@ async function sendPositionIfDue(position, force = false) {
 // DEMARRAGE CAMERA
 // ======================================================
 
-async function startCamera() {
+async function startCamera()
+{
 
-    cameraStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
 
         video: {
             facingMode: "environment"
@@ -365,17 +419,26 @@ async function startCamera() {
 
     });
 
-    video.srcObject = cameraStream;
 
-    await new Promise(resolve => {
+    cameraStream = stream;
 
-        if (video.readyState >= 1) {
+    video.srcObject = stream;
+
+
+    // Attendre que la caméra soit prête
+
+    await new Promise(resolve =>
+    {
+
+        if (video.readyState >= 1)
+        {
 
             resolve();
 
         }
 
-        else {
+        else
+        {
 
             video.addEventListener(
                 "loadedmetadata",
@@ -387,14 +450,13 @@ async function startCamera() {
 
     });
 
+
     await video.play();
+
 
     canvas.width = video.videoWidth;
 
     canvas.height = video.videoHeight;
-
-    document.getElementById("container").style.aspectRatio =
-        `${video.videoWidth} / ${video.videoHeight}`;
 
 }
 
@@ -403,15 +465,18 @@ async function startCamera() {
 // DETECTION PERSONNE
 // ======================================================
 
-async function startDetection() {
+async function startDetection()
+{
 
     console.log("Chargement du modèle...");
 
-    model = await cocoSsd.load();
+    const modelLoaded = await cocoSsd.load();
 
     console.log("Modèle chargé");
 
-    detectPerson();
+    model = modelLoaded;
+
+    detectPerson(model);
 
 }
 
@@ -420,176 +485,157 @@ async function startDetection() {
 // DETECTION
 // ======================================================
 
-async function detectPerson() {
+async function detectPerson(model)
+{
 
-    while (running) {
+    canvas.width = video.videoWidth;
 
-        try {
-
-            // Détection avec COCO-SSD
-            const predictions = await model.detect(video);
+    canvas.height = video.videoHeight;
 
 
-            // Nettoyage du canvas
-            ctx.clearRect(
-                0,
-                0,
-                canvas.width,
-                canvas.height
+    const predictions = await model.detect(video);
+
+
+    // Nettoyage
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+
+    // Cherche les personnes
+    const persons = predictions.filter(
+        p => p.class === "person"
+    );
+
+
+    if (persons.length > 0)
+    {
+
+        // On prend la personne avec
+        // la plus grande probabilité
+
+        persons.sort(
+            (a, b) => b.score - a.score
+        );
+
+        const person = persons[0];
+
+
+        // -------------------------------
+        // Bounding box
+        // -------------------------------
+
+        const [x, y, width, height] =
+            person.bbox;
+
+
+        // Centre de la personne
+        const centerX =
+            x + width / 2;
+
+
+        // Centre de l'image
+        const imageCenter =
+            video.videoWidth / 2;
+
+
+        // -------------------------------
+        // Normalisation
+        // -------------------------------
+
+        let normalizedX =
+            (centerX - imageCenter)
+            / imageCenter;
+
+
+        // Limitation
+        normalizedX =
+            Math.max(
+                -1,
+                Math.min(
+                    1,
+                    normalizedX
+                )
             );
 
 
-            // Cherche les personnes
-            const persons = predictions.filter(
-                p => p.class === "person"
-            );
+        // Affichage
+        xDisplay.textContent =
+            normalizedX.toFixed(2);
+
+        detectionDisplay.textContent =
+            Math.round(person.score * 100) + " %";
 
 
-            if (persons.length > 0) {
+        // -------------------------------
+        // Dessin
+        // -------------------------------
 
-                // On prend la personne avec
-                // la plus grande probabilité
+        ctx.strokeStyle = "red";
 
-                persons.sort(
-                    (a, b) => b.score - a.score
-                );
+        ctx.lineWidth = 4;
 
-                const person = persons[0];
-
-
-                // -------------------------------
-                // Bounding box
-                // -------------------------------
-
-                const [x, y, width, height] =
-                    person.bbox;
+        ctx.strokeRect(
+            x,
+            y,
+            width,
+            height
+        );
 
 
-                // Centre de la personne
-                const centerX =
-                    x + width / 2;
+        // Ligne centrale
+        ctx.strokeStyle = "yellow";
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            imageCenter,
+            0
+        );
+
+        ctx.lineTo(
+            imageCenter,
+            canvas.height
+        );
+
+        ctx.stroke();
 
 
-                // Centre de l'image
-                const imageCenter =
-                    video.videoWidth / 2;
+        // Point central de la personne
+        ctx.fillStyle = "lime";
+
+        ctx.beginPath();
+
+        ctx.arc(
+            centerX,
+            y + height / 2,
+            8,
+            0,
+            2 * Math.PI
+        );
+
+        ctx.fill();
 
 
-                // -------------------------------
-                // Normalisation
-                // -------------------------------
+        // -------------------------------
+        // ENVOI ESP32 PAR BLE
+        // -------------------------------
 
-                let normalizedX =
-                    (centerX - imageCenter)
-                    / imageCenter;
+        sendPosition(normalizedX);
 
-
-                // Limitation
-                normalizedX =
-                    Math.max(
-                        -1,
-                        Math.min(
-                            1,
-                            normalizedX
-                        )
-                    );
+    }
 
 
-                // Affichage
-                xDisplay.textContent =
-                    normalizedX.toFixed(3);
+    // Nouvelle détection
+    if (running)
+    {
 
-                detectionDisplay.textContent =
-                    Math.round(person.score * 100) + " %";
-
-
-                // -------------------------------
-                // Dessin
-                // -------------------------------
-
-                ctx.strokeStyle = "red";
-
-                ctx.lineWidth = 4;
-
-                ctx.strokeRect(
-                    x,
-                    y,
-                    width,
-                    height
-                );
-
-
-                // Ligne centrale
-                ctx.strokeStyle = "yellow";
-
-                ctx.beginPath();
-
-                ctx.moveTo(
-                    imageCenter,
-                    0
-                );
-
-                ctx.lineTo(
-                    imageCenter,
-                    canvas.height
-                );
-
-                ctx.stroke();
-
-
-                // Point central de la personne
-                ctx.fillStyle = "lime";
-
-                ctx.beginPath();
-
-                ctx.arc(
-                    centerX,
-                    y + height / 2,
-                    8,
-                    0,
-                    2 * Math.PI
-                );
-
-                ctx.fill();
-
-
-                // -------------------------------
-                // ENVOI ESP32 EN BLE
-                // -------------------------------
-
-                await sendPositionIfDue(normalizedX);
-
-            }
-
-            else {
-
-                // Aucune personne détectée
-                xDisplay.textContent = "0.000";
-
-                detectionDisplay.textContent = "Aucune";
-
-
-                // Envoi d'une position neutre
-                await sendPositionIfDue(
-                    0,
-                    lastSentPosition !== 0
-                );
-
-            }
-
-        }
-
-        catch (error) {
-
-            running = false;
-
-            setStatus("Erreur détection : " + error.message);
-
-            await stopTracking(false);
-
-            break;
-
-        }
+        requestAnimationFrame(
+            () => detectPerson(model)
+        );
 
     }
 
@@ -597,32 +643,50 @@ async function detectPerson() {
 
 
 // ======================================================
-// DEMARRAGE DU SUIVI
+// DEMARRAGE DU SYSTEME
 // ======================================================
 
-async function startTracking() {
+async function start()
+{
 
     if (running) return;
 
-    startButton.disabled = true;
+    try
+    {
 
-    try {
+        startButton.disabled = true;
 
-        setStatus("Démarrage de la caméra...");
+        statusDisplay.textContent =
+            "Démarrage de la caméra...";
+
 
         await startCamera();
 
-        setStatus("Chargement du modèle COCO-SSD...");
+
+        statusDisplay.textContent =
+            "Chargement du modèle de détection...";
+
+
+        running = true;
+
+        stopButton.disabled = false;
+
 
         await startDetection();
 
+
+        statusDisplay.textContent =
+            "Détection active.";
+
     }
 
-    catch (error) {
+    catch(error)
+    {
 
-        await stopTracking(false);
+        statusDisplay.textContent =
+            "Erreur : " + error.message;
 
-        setStatus("Erreur : " + error.message);
+        await stopTracking();
 
     }
 
@@ -630,22 +694,19 @@ async function startTracking() {
 
 
 // ======================================================
-// ARRET DU SUIVI
+// ARRET DU SYSTEME
 // ======================================================
 
-async function stopTracking(sendNeutral = true) {
+async function stopTracking()
+{
 
     running = false;
 
-    // Envoyer 0 avant l'arrêt
-    if (sendNeutral && isBleConnected()) {
 
-        await writePosition(0);
+    // Arrêt de la caméra
 
-    }
-
-
-    if (cameraStream) {
+    if (cameraStream)
+    {
 
         cameraStream.getTracks().forEach(
             track => track.stop()
@@ -658,6 +719,9 @@ async function stopTracking(sendNeutral = true) {
 
     video.srcObject = null;
 
+
+    // Nettoyage du canvas
+
     ctx.clearRect(
         0,
         0,
@@ -666,25 +730,26 @@ async function stopTracking(sendNeutral = true) {
     );
 
 
+    // Mise à jour affichage
+
+    xDisplay.textContent = "0";
+
+    detectionDisplay.textContent = "Arrêtée";
+
+
     startButton.disabled = false;
 
     stopButton.disabled = true;
 
-    xDisplay.textContent = "0.000";
 
-    detectionDisplay.textContent = "Arrêtée";
-
-    if (sendNeutral) {
-
-        setStatus("Suivi arrêté.");
-
-    }
+    statusDisplay.textContent =
+        "Suivi arrêté.";
 
 }
 
 
 // ======================================================
-// BOUTONS
+// EVENEMENTS DES BOUTONS
 // ======================================================
 
 connectButton.addEventListener(
@@ -695,29 +760,30 @@ connectButton.addEventListener(
 
 startButton.addEventListener(
     "click",
-    startTracking
+    start
 );
 
 
 stopButton.addEventListener(
     "click",
-    () => stopTracking(true)
+    stopTracking
 );
 
 
 // ======================================================
-// INITIALISATION
+// VERIFICATION HTTPS
 // ======================================================
 
-if (!window.isSecureContext) {
+if (!window.isSecureContext)
+{
 
-    setStatus(
-        "Ouvre cette page en HTTPS pour utiliser la caméra et le BLE."
-    );
+    statusDisplay.textContent =
+        "Attention : HTTPS nécessaire pour la caméra et le BLE.";
 
 }
 
 </script>
 
 </body>
+
 </html>
